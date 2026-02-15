@@ -5,22 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin | GGT Voting</title>
     
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://www.gstatic.com">
+
     <!-- Firebase SDKs -->
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-      import { getFirestore, collection, doc, onSnapshot, setDoc, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+      import { getFirestore, collection, doc, onSnapshot, setDoc, getDocs, writeBatch, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
       import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-      const firebaseConfig = {
-        apiKey: "AIzaSyAsQeD83RdAyZPJZeAOif1gSasMhv2zp3M",
-        authDomain: "gcu-s-got-talent-2026.firebaseapp.com",
-        projectId: "gcu-s-got-talent-2026",
-        storageBucket: "gcu-s-got-talent-2026.firebasestorage.app",
-        messagingSenderId: "999052757013",
-        appId: "1:999052757013:web:3f75bdbf48f921b831a61c"
-      };
-
-      const appId = 'gcu-talent-show-2026';
+      // 1. Configuration: RULE 1 - Use environment-provided appId for correct permissions
+      const firebaseConfig = JSON.parse(__firebase_config);
+      const appId = typeof __app_id !== 'undefined' ? __app_id : 'gcu-talent-show-2026';
       const ADMIN_PASSWORD = "Cabgcu49!";
       
       const app = initializeApp(firebaseConfig);
@@ -42,16 +38,24 @@
       let currentUser = null;
       let isAuthenticated = false;
 
-      // 1. Password Protection Logic
-      window.attemptLogin = function() {
+      /**
+       * PASSWORD PROTECTION
+       */
+      window.attemptLogin = async function() {
         const passInput = document.getElementById('admin-pass');
         const errorMsg = document.getElementById('login-error');
+        const loginBtn = document.querySelector('.login-btn');
         
         if (passInput.value === ADMIN_PASSWORD) {
+            loginBtn.disabled = true;
+            loginBtn.innerText = "Connecting...";
+            
             isAuthenticated = true;
+            // RULE 3: Auth BEFORE Queries - Ensure auth finishes before showing dashboard
+            await initAuth(); 
+            
             document.getElementById('view-login').style.display = 'none';
             document.getElementById('view-admin').style.display = 'block';
-            initAuth(); // Start Firebase only after login
         } else {
             errorMsg.innerText = "Incorrect password. Access denied.";
             passInput.value = "";
@@ -59,16 +63,18 @@
         }
       };
 
-      // Allow Enter key to submit password
       window.handlePassKey = function(e) {
         if (e.key === 'Enter') attemptLogin();
       };
 
-      // 2. Firebase Auth Lifecycle
-      const initAuth = async () => {
+      /**
+       * FIREBASE AUTHENTICATION
+       */
+      async function initAuth() {
         try {
+          updateStatusBadge("AUTHENTICATING...", "#FFA500");
           if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
+            await signInWithCustomToken(auth, __initial_auth_token);
           } else {
             await signInAnonymously(auth);
           }
@@ -76,12 +82,12 @@
           console.error("Auth failed:", error);
           updateStatusBadge("AUTH ERROR", "#ff453a");
         }
-      };
+      }
 
       onAuthStateChanged(auth, (user) => {
         currentUser = user;
         if (user && isAuthenticated) {
-          updateStatusBadge("ADMIN CONNECTED", "#30d158");
+          updateStatusBadge("ADMIN LIVE", "#30d158");
           startSync();
         }
       });
@@ -94,10 +100,14 @@
         badge.style.borderColor = color;
       }
 
-      // 3. Data Synchronization
+      /**
+       * DATA SYNCHRONIZATION
+       * Monitors voting status and live vote counts.
+       */
       function startSync() {
         if (!currentUser || !isAuthenticated) return;
 
+        // Sync Status (Open/Closed)
         const statusDoc = doc(db, 'artifacts', appId, 'public', 'data', 'status', 'settings');
         onSnapshot(statusDoc, (snapshot) => {
           if (snapshot.exists()) {
@@ -106,28 +116,53 @@
           } else {
             setDoc(statusDoc, { open: true }, { merge: true });
           }
-        }, (err) => console.error("Status Sync Error:", err));
+        }, (err) => {
+            console.error("Status Sync Error:", err);
+            if (err.code === 'resource-exhausted') {
+                document.getElementById('db-status').innerText = "QUOTA REACHED - WAIT 1 MIN";
+            } else if (err.code === 'permission-denied') {
+                document.getElementById('arena-indicator').innerText = "STATUS ACCESS BLOCKED";
+            }
+        });
 
+        // Sync Votes - RULE 1: Strict Paths
         const votesRef = collection(db, 'artifacts', appId, 'public', 'data', 'votes');
+        
         onSnapshot(votesRef, (snapshot) => {
           const votes = [];
-          snapshot.forEach(doc => votes.push(doc.data()));
+          snapshot.forEach(doc => {
+            const data = doc.data();
+            votes.push(data);
+          });
           document.getElementById('db-status').innerText = `LIVE: ${votes.length} VOTES`;
           renderStats(votes);
           renderRecentFeed(votes);
         }, (error) => {
-          document.getElementById('db-status').innerText = "FEED BLOCKED (Check Rules)";
+          console.error("Vote feed error:", error);
+          if (error.code === 'resource-exhausted') {
+            document.getElementById('db-status').innerText = "SERVER BUSY (Upgrade Propagation)";
+          } else if (error.code === 'permission-denied') {
+            document.getElementById('db-status').innerText = "PERMISSION DENIED (Path Mismatch)";
+          } else {
+            document.getElementById('db-status').innerText = "FEED ERROR: " + error.code;
+          }
         });
       }
 
-      // 4. Admin Actions
+      /**
+       * ADMIN ACTIONS
+       */
       window.toggleVoting = async function() {
         if (!currentUser) return;
         const statusDoc = doc(db, 'artifacts', appId, 'public', 'data', 'status', 'settings');
+        const btn = document.getElementById('toggle-btn');
+        btn.disabled = true;
         try {
           await setDoc(statusDoc, { open: !isVotingOpen }, { merge: true });
         } catch (e) {
-          alert("Action blocked.");
+          console.error("Action blocked:", e);
+        } finally {
+          btn.disabled = false;
         }
       };
 
@@ -140,15 +175,15 @@
         try {
           const votesRef = collection(db, 'artifacts', appId, 'public', 'data', 'votes');
           const snapshot = await getDocs(votesRef);
-          let docs = snapshot.docs;
+          let docsToDelete = snapshot.docs;
           
-          while (docs.length > 0) {
+          while (docsToDelete.length > 0) {
             const batch = writeBatch(db);
-            const chunk = docs.splice(0, 500);
+            const chunk = docsToDelete.splice(0, 400);
             chunk.forEach(d => batch.delete(d.ref));
             await batch.commit();
           }
-          alert("Database cleared.");
+          alert("All data has been cleared.");
         } catch (e) {
           alert("Reset failed: " + e.message);
         } finally {
@@ -163,12 +198,12 @@
         if (isVotingOpen) {
           btn.innerText = "Close Voting";
           btn.style.background = "#FF453A";
-          indicator.innerText = "VOTING IS OPENED";
+          indicator.innerText = "ARENA IS OPENED";
           indicator.style.color = "#30d158";
         } else {
           btn.innerText = "Open Voting";
           btn.style.background = "#30D158";
-          indicator.innerText = "VOTING IS CLOSED";
+          indicator.innerText = "ARENA IS CLOSED";
           indicator.style.color = "#ff453a";
         }
       }
@@ -192,12 +227,19 @@
       }
 
       function renderRecentFeed(votes) {
-        const recent = [...votes].filter(v => v.timestamp).sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)).slice(0, 10);
+        const recent = [...votes]
+          .filter(v => v.timestamp)
+          .sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0))
+          .slice(0, 10);
+          
         const list = document.getElementById('recent-list');
-        if (recent.length === 0) { list.innerHTML = '<div style="text-align:center; padding:20px; color:#555;">Waiting...</div>'; return; }
+        if (recent.length === 0) { 
+          list.innerHTML = '<div style="text-align:center; padding:20px; color:#555;">Waiting for incoming data...</div>'; 
+          return; 
+        }
         list.innerHTML = recent.map(v => `
           <div class="feed-item">
-            <span><strong>${v.studentId}</strong> → ${v.performerName}</span>
+            <span><strong>${v.studentId || 'ANON'}</strong> → ${v.performerName || 'Unknown'}</span>
             <span class="timestamp">${v.timestamp ? new Date(v.timestamp.seconds * 1000).toLocaleTimeString() : 'now'}</span>
           </div>
         `).join('');
@@ -217,7 +259,7 @@
         * { box-sizing: border-box; }
 
         body {
-            margin: 0; font-family: -apple-system, system-ui, sans-serif;
+            margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
             color: var(--text); background-color: var(--bg-dark); padding: 20px;
             min-height: 100vh; overflow-x: hidden;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -242,15 +284,16 @@
         }
         .login-input {
             width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--border);
-            padding: 14px; border-radius: 12px; color: white; text-align: center;
+            padding: 16px; border-radius: 12px; color: white; text-align: center;
             font-size: 1rem; margin: 16px 0; outline: none; transition: 0.3s;
         }
         .login-input:focus { border-color: var(--accent); box-shadow: 0 0 10px rgba(10, 132, 255, 0.2); }
         .login-btn {
             width: 100%; background: var(--accent); color: white; border: none;
-            padding: 14px; border-radius: 12px; font-weight: 700; cursor: pointer;
+            padding: 16px; border-radius: 12px; font-weight: 700; cursor: pointer;
             text-transform: uppercase; font-size: 0.9rem;
         }
+        .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         #login-error { color: #FF453A; font-size: 0.75rem; font-weight: 600; margin-top: 12px; }
 
         /* --- ADMIN VIEW --- */
@@ -286,6 +329,9 @@
             color: white; font-weight: 900; cursor: pointer; text-transform: uppercase;
             font-size: 1rem; margin-top: 10px; transition: transform 0.2s;
         }
+        .toggle-btn:active { transform: scale(0.98); }
+        .toggle-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
         .reset-btn {
             background: none; border: 1px solid rgba(255, 69, 58, 0.3); color: #ff453a;
             font-size: 0.7rem; padding: 12px; border-radius: 14px; margin-top: 25px; cursor: pointer;
@@ -334,10 +380,10 @@
 <!-- ================= LOGIN SCREEN ================= -->
 <div id="view-login">
     <div class="login-card">
-        <h1 style="color: white; margin-bottom: 16px; font-size: 1.5rem; text-transform: none; letter-spacing: -0.01em;">Gcu's Got Talent Admin</h1>
+        <h1 style="color: white; margin-bottom: 16px; font-size: 1.5rem; text-transform: none; letter-spacing: -0.01em;">GCU Admin Access</h1>
         
-        <input type="password" id="admin-pass" class="login-input" placeholder="Enter Password" onkeypress="handlePassKey(event)">
-        <button class="login-btn" onclick="attemptLogin()">Grant Access</button>
+        <input type="password" id="admin-pass" class="login-input" placeholder="Admin Password" onkeypress="handlePassKey(event)">
+        <button class="login-btn" onclick="attemptLogin()">Log In</button>
         <div id="login-error"></div>
     </div>
 </div>
@@ -345,14 +391,14 @@
 <!-- ================= ADMIN DASHBOARD ================= -->
 <div id="view-admin" class="container">
     <header>
-        <h1 style="text-transform: none; letter-spacing: -0.02em;">Gcu's Got Talent Admin</h1>
-        <div id="status-badge" class="status-badge">AUTHENTICATING...</div>
+        <h1 style="text-transform: none; letter-spacing: -0.02em;">GGT Performance Hub</h1>
+        <div id="status-badge" class="status-badge">READY...</div>
     </header>
 
     <div class="main-controls">
         <div class="control-card">
             <div id="total-votes-count" class="big-number">0</div>
-            <div class="label">Total Arena Votes</div>
+            <div class="label">Total Recorded Votes</div>
             <div id="db-status">CONNECTING...</div>
         </div>
         
@@ -363,11 +409,11 @@
         </div>
     </div>
 
-    <h3 class="label" style="margin-bottom:15px; color: var(--accent);">Live Votes</h3>
+    <h3 class="label" style="margin-bottom:15px; color: var(--accent);">Live Rankings</h3>
     <div id="stats-grid" class="stats-grid"></div>
 
     <div class="recent-feed">
-        <h3 class="label" style="margin-bottom:15px; color: var(--accent);">Recent Activity</h3>
+        <h3 class="label" style="margin-bottom:15px; color: var(--accent);">Incoming Activity</h3>
         <div id="recent-list"></div>
     </div>
 </div>
