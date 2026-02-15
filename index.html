@@ -15,8 +15,17 @@
       import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
       // 1. Configuration: RULE 1 - Use environment-provided appId for correct permissions
-      const firebaseConfig = JSON.parse(__firebase_config);
-      const appId = typeof __app_id !== 'undefined' ? __app_id : 'gcu-talent-show-2026';
+      const firebaseConfig = {
+        apiKey: "AIzaSyAsQeD83RdAyZPJZeAOif1gSasMhv2zp3M",
+        authDomain: "gcu-s-got-talent-2026.firebaseapp.com",
+        projectId: "gcu-s-got-talent-2026",
+        storageBucket: "gcu-s-got-talent-2026.firebasestorage.app",
+        messagingSenderId: "999052757013",
+        appId: "1:999052757013:web:3f75bdbf48f921b831a61c"
+      };
+
+      // Pointing to the exact location of the GGT 2026 data
+      const appId = 'c_97156435f4eefd8e_importer.html-977';
       const ADMIN_PASSWORD = "Cabgcu49!";
       
       const app = initializeApp(firebaseConfig);
@@ -51,7 +60,7 @@
             loginBtn.innerText = "Connecting...";
             
             isAuthenticated = true;
-            // RULE 3: Auth BEFORE Queries - Ensure auth finishes before showing dashboard
+            // RULE 3: Auth BEFORE Queries
             await initAuth(); 
             
             document.getElementById('view-login').style.display = 'none';
@@ -74,7 +83,7 @@
         try {
           updateStatusBadge("AUTHENTICATING...", "#FFA500");
           if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
+            await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
           } else {
             await signInAnonymously(auth);
           }
@@ -87,7 +96,7 @@
       onAuthStateChanged(auth, (user) => {
         currentUser = user;
         if (user && isAuthenticated) {
-          updateStatusBadge("ADMIN LIVE", "#30d158");
+          updateStatusBadge("ADMIN LIVE", "#ffffff");
           startSync();
         }
       });
@@ -102,7 +111,6 @@
 
       /**
        * DATA SYNCHRONIZATION
-       * Monitors voting status and live vote counts.
        */
       function startSync() {
         if (!currentUser || !isAuthenticated) return;
@@ -118,14 +126,10 @@
           }
         }, (err) => {
             console.error("Status Sync Error:", err);
-            if (err.code === 'resource-exhausted') {
-                document.getElementById('db-status').innerText = "QUOTA REACHED - WAIT 1 MIN";
-            } else if (err.code === 'permission-denied') {
-                document.getElementById('arena-indicator').innerText = "STATUS ACCESS BLOCKED";
-            }
+            document.getElementById('db-status').innerText = "SYNC ERROR";
         });
 
-        // Sync Votes - RULE 1: Strict Paths
+        // Sync Votes
         const votesRef = collection(db, 'artifacts', appId, 'public', 'data', 'votes');
         
         onSnapshot(votesRef, (snapshot) => {
@@ -139,13 +143,7 @@
           renderRecentFeed(votes);
         }, (error) => {
           console.error("Vote feed error:", error);
-          if (error.code === 'resource-exhausted') {
-            document.getElementById('db-status').innerText = "SERVER BUSY (Upgrade Propagation)";
-          } else if (error.code === 'permission-denied') {
-            document.getElementById('db-status').innerText = "PERMISSION DENIED (Path Mismatch)";
-          } else {
-            document.getElementById('db-status').innerText = "FEED ERROR: " + error.code;
-          }
+          document.getElementById('db-status').innerText = "FEED ERROR";
         });
       }
 
@@ -167,7 +165,7 @@
       };
 
       window.resetVotes = async function() {
-        if (!confirm("Are you sure? This deletes ALL votes currently recorded.")) return;
+        if (!confirm("Are you sure? This deletes ALL votes currently recorded for GGT 2026.")) return;
         const btn = document.getElementById('reset-btn');
         btn.disabled = true;
         btn.innerText = "Processing Reset...";
@@ -198,7 +196,7 @@
         if (isVotingOpen) {
           btn.innerText = "Close Voting";
           btn.style.background = "#FF453A";
-          indicator.innerText = "ARENA IS OPENED";
+          indicator.innerText = "ARENA IS OPEN";
           indicator.style.color = "#30d158";
         } else {
           btn.innerText = "Open Voting";
@@ -239,7 +237,7 @@
         }
         list.innerHTML = recent.map(v => `
           <div class="feed-item">
-            <span><strong>${v.studentId || 'ANON'}</strong> → ${v.performerName || 'Unknown'}</span>
+            <span><strong>${v.studentId || 'ID:' + v.voterUid?.slice(0,5)}</strong> → ${v.performerName || 'Unknown'}</span>
             <span class="timestamp">${v.timestamp ? new Date(v.timestamp.seconds * 1000).toLocaleTimeString() : 'now'}</span>
           </div>
         `).join('');
@@ -278,7 +276,7 @@
         /* --- LOGIN VIEW --- */
         #view-login { width: 100%; max-width: 380px; text-align: center; }
         .login-card {
-            background: var(--glass); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            background: var(--glass); backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px);
             padding: 32px; border-radius: 24px; border: 1px solid var(--border);
             box-shadow: 0 25px 50px rgba(0,0,0,0.5);
         }
@@ -304,7 +302,7 @@
             padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 30px;
         }
 
-        h1 { margin: 0; font-size: 1.4rem; font-weight: 900; letter-spacing: -0.02em; color: #ffffff; }
+        h1 { margin: 0; font-size: 1.4rem; font-weight: 900; letter-spacing: -0.02em; color: #ffffff; text-transform: uppercase; }
 
         .status-badge {
             padding: 5px 15px; border-radius: 100px; font-size: 0.7rem;
@@ -322,7 +320,7 @@
         }
 
         .big-number { font-size: 4.5rem; font-weight: 900; color: var(--accent); line-height: 1; }
-        .label { font-size: 0.75rem; text-transform: uppercase; font-weight: 800; color: var(--muted); margin-top: 10px; letter-spacing: 0.1em; }
+        .label { font-size: 0.75rem; text-transform: uppercase; font-weight: 800; color: var(--text); margin-top: 10px; letter-spacing: 0.1em; }
 
         .toggle-btn {
             width: 100%; border: none; padding: 20px; border-radius: 18px;
@@ -349,14 +347,14 @@
         }
 
         .rank { font-size: 0.6rem; font-weight: 900; color: var(--accent); margin-bottom: 12px; }
-        .performer-name { font-weight: 800; font-size: 1.1rem; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .performer-name { font-weight: 900; font-size: 1.1rem; margin-bottom: 6px; text-transform: uppercase; letter-spacing: -0.04em; }
         .vote-count { font-size: 2rem; font-weight: 900; margin-bottom: 15px; }
 
         .progress-bar-bg { height: 6px; background: rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden; }
         .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #BF5AF2); transition: width 1s ease; }
 
         .recent-feed {
-            background: var(--glass); padding: 30px; border-radius: 28px; border: 1px solid var(--border);
+            background: var(--glass); padding: 30px; border-radius: 28px; border: 1px solid var(--border); text-align: left;
         }
 
         .feed-item {
@@ -380,18 +378,19 @@
 <!-- ================= LOGIN SCREEN ================= -->
 <div id="view-login">
     <div class="login-card">
-        <h1 style="color: white; margin-bottom: 16px; font-size: 1.5rem; text-transform: none; letter-spacing: -0.01em;">GCU Admin Access</h1>
+        <div style="color: white; margin-bottom: 16px; font-size: 0.65rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.2em;">Canyon Activities Board</div>
+        <h1 style="color: white; margin-bottom: 24px; font-size: 1.8rem; letter-spacing: -0.04em;">GGT ADMIN HUB</h1>
         
         <input type="password" id="admin-pass" class="login-input" placeholder="Admin Password" onkeypress="handlePassKey(event)">
         <button class="login-btn" onclick="attemptLogin()">Log In</button>
-        <div id="login-error"></div>
+        <div id="login-error" class="error-message"></div>
     </div>
 </div>
 
 <!-- ================= ADMIN DASHBOARD ================= -->
 <div id="view-admin" class="container">
     <header>
-        <h1 style="text-transform: none; letter-spacing: -0.02em;">GGT Performance Hub</h1>
+        <h1>GGT Performance Hub</h1>
         <div id="status-badge" class="status-badge">READY...</div>
     </header>
 
@@ -403,18 +402,22 @@
         </div>
         
         <div class="control-card">
-            <div id="arena-indicator" style="font-weight:900; margin-bottom:15px; font-size: 0.85rem;">INITIALIZING...</div>
+            <div id="arena-indicator" style="font-weight:900; margin-bottom:15px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em;">INITIALIZING...</div>
             <button id="toggle-btn" class="toggle-btn" onclick="toggleVoting()">---</button>
             <button id="reset-btn" class="reset-btn" onclick="resetVotes()">Reset All Data</button>
         </div>
     </div>
 
-    <h3 class="label" style="margin-bottom:15px; color: var(--accent);">Live Rankings</h3>
+    <h3 class="label" style="margin-bottom:15px; color: #ffffff;">Live Rankings</h3>
     <div id="stats-grid" class="stats-grid"></div>
 
     <div class="recent-feed">
-        <h3 class="label" style="margin-bottom:15px; color: var(--accent);">Incoming Activity</h3>
+        <h3 class="label" style="margin-bottom:15px; color: #ffffff;">Incoming Activity</h3>
         <div id="recent-list"></div>
+    </div>
+    
+    <div style="margin-top: 40px; text-align: center; color: #ffffff; font-size: 0.6rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.2em; opacity: 0.4;">
+        © 2026 Canyon Activities Board
     </div>
 </div>
 
