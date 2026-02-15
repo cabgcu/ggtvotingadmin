@@ -64,7 +64,6 @@
             loginBtn.innerText = "VERIFYING...";
             
             try {
-                // Auth BEFORE Queries
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
                 } else {
@@ -74,7 +73,6 @@
                 document.getElementById('view-login').style.display = 'none';
                 document.getElementById('view-admin').style.display = 'block';
                 
-                // Trigger live sync immediately
                 startSync();
             } catch (e) {
                 console.error(e);
@@ -102,7 +100,6 @@
         const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'status', 'settings');
         const votesRef = collection(db, 'artifacts', appId, 'public', 'data', 'votes');
 
-        // Arena Status Sync
         onSnapshot(settingsRef, (snap) => {
           if (snap.exists()) {
             isVotingOpen = snap.data().open !== false;
@@ -114,7 +111,6 @@
           updateIndicator("LINK BLOCKED: " + err.code, "#ff453a");
         });
 
-        // Vote Stream Sync
         onSnapshot(votesRef, (snapshot) => {
           const votes = [];
           snapshot.forEach(doc => votes.push(doc.data()));
@@ -176,7 +172,8 @@
         const indicator = document.getElementById('arena-indicator');
         btn.innerText = isVotingOpen ? "Close Voting" : "Open Voting";
         btn.style.background = isVotingOpen ? "#FF453A" : "#30D158";
-        indicator.innerText = isVotingOpen ? "ARENA IS OPEN" : "ARENA IS CLOSED";
+        // User requested "Voting is Open/Closed"
+        indicator.innerText = isVotingOpen ? "VOTING IS OPEN" : "VOTING IS CLOSED";
         indicator.style.color = isVotingOpen ? "#30d158" : "#ff453a";
       }
 
@@ -263,7 +260,7 @@
 <!-- DASHBOARD -->
 <div id="view-admin" class="container">
     <header>
-        <h1 style="font-size:1.3rem; text-transform: uppercase; font-weight: 900; letter-spacing: -0.02em;">GGT Performance Hub</h1>
+        <h1 style="font-size:1.3rem; text-transform: uppercase; font-weight: 900; letter-spacing: -0.02em;">GGT VOTING ADMIN</h1>
         <div id="status-badge" style="font-size: 0.65rem; font-weight: 900; padding: 6px 16px; border: 1px solid #fff; border-radius: 50px; text-transform: uppercase;">Admin Session</div>
     </header>
 
