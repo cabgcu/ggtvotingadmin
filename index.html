@@ -12,10 +12,10 @@
 
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-      import { getFirestore, collection, doc, onSnapshot, setDoc, getDocs, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-      import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+      import { getFirestore, collection, doc, onSnapshot, setDoc, getDoc, writeBatch, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+      import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-      // 1. Production Configuration
+      // 1. Configuration
       const firebaseConfig = {
         apiKey: "AIzaSyAsQeD83RdAyZPJZeAOif1gSasMhv2zp3M",
         authDomain: "gcu-s-got-talent-2026.firebaseapp.com",
@@ -41,52 +41,37 @@
 
       let isVotingOpen = true;
       let syncStarted = false;
-      let allArenaVotes = []; // Contains both ID-based and SMS
+      let allArenaVotes = [];
       let onlineVotes = [];
 
-      function updateIndicator(text, color = null) {
-        const el = document.getElementById('arena-indicator');
-        if (el) {
-          el.innerText = text;
-          if (color) el.style.color = color;
-        }
-      }
-
+      // --- LOGIN LOGIC ---
       window.attemptLogin = async function() {
         const passInput = document.getElementById('admin-pass');
         const loginBtn = document.querySelector('.login-btn');
-        const errorMsg = document.getElementById('login-error');
         
         if (passInput.value === ADMIN_PASSWORD) {
             loginBtn.disabled = true;
             loginBtn.innerText = "VERIFYING...";
             try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
-                } else {
-                    await signInAnonymously(auth);
-                }
+                await signInAnonymously(auth);
                 document.getElementById('view-login').style.display = 'none';
                 document.getElementById('view-admin').style.display = 'block';
                 startSync();
             } catch (e) {
+                alert("Auth Error: " + e.message);
                 loginBtn.disabled = false;
-                loginBtn.innerText = "Log In";
-                errorMsg.innerText = "Auth Error. Please refresh.";
             }
         } else {
-            errorMsg.innerText = "Incorrect Password.";
-            passInput.value = "";
+            alert("Incorrect Password");
         }
       };
 
       window.handlePassKey = (e) => { if (e.key === 'Enter') attemptLogin(); };
 
+      // --- REAL-TIME DATA SYNC ---
       function startSync() {
         if (syncStarted) return;
         syncStarted = true;
-        
-        updateIndicator("ESTABLISHING LINK...");
         
         const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'status', 'settings');
         const arenaVotesRef = collection(db, 'artifacts', appId, 'public', 'data', 'votes');
@@ -97,16 +82,16 @@
             isVotingOpen = snap.data().open !== false;
             updateStatusUI();
           }
-        }, (err) => updateIndicator("LINK BLOCKED: " + err.code, "#ff453a"));
+        });
 
-        // Arena Vote Sync (Includes SMS)
+        // Sync Arena (QR) + SMS Votes
         onSnapshot(arenaVotesRef, (snapshot) => {
           allArenaVotes = [];
           snapshot.forEach(doc => allArenaVotes.push(doc.data()));
           renderAllData();
         });
 
-        // Online/VIP Vote Sync
+        // Sync Online/VIP Votes
         onSnapshot(onlineVotesRef, (snapshot) => {
           onlineVotes = [];
           snapshot.forEach(doc => onlineVotes.push(doc.data()));
@@ -115,32 +100,27 @@
       }
 
       function renderAllData() {
-        // Separate SMS votes from true Arena (QR) votes
-        // SMS votes have method: 'SMS'
+        // Separate SMS from QR
         const smsVotes = allArenaVotes.filter(v => v.method === 'SMS');
         const trueArenaVotes = allArenaVotes.filter(v => v.method !== 'SMS');
-
         const total = allArenaVotes.length + onlineVotes.length;
         
         document.getElementById('total-votes-count').innerText = total.toLocaleString();
-        
-        // Update Split Counts
         document.getElementById('arena-split-count').innerText = trueArenaVotes.length.toLocaleString();
         document.getElementById('online-split-count').innerText = onlineVotes.length.toLocaleString();
         document.getElementById('sms-split-count').innerText = smsVotes.length.toLocaleString();
 
         document.getElementById('db-status').innerText = `LIVE: ${total} TOTAL RECORDS`;
 
-        // Render Grids
-        renderStatsGrid('stats-grid-combined', [...allArenaVotes, ...onlineVotes], "COMBINED");
-        renderStatsGrid('stats-grid-arena', trueArenaVotes, "ARENA ONLY");
-        renderStatsGrid('stats-grid-online', onlineVotes, "VIP ONLY");
-        renderStatsGrid('stats-grid-sms', smsVotes, "SMS ONLY");
+        renderStatsGrid('stats-grid-combined', [...allArenaVotes, ...onlineVotes]);
+        renderStatsGrid('stats-grid-arena', trueArenaVotes);
+        renderStatsGrid('stats-grid-online', onlineVotes);
+        renderStatsGrid('stats-grid-sms', smsVotes);
         
         renderRecentFeed([...allArenaVotes, ...onlineVotes]);
       }
 
-      function renderStatsGrid(elementId, dataset, label) {
+      function renderStatsGrid(elementId, dataset) {
         const counts = {};
         dataset.forEach(v => { counts[v.performerId] = (counts[v.performerId] || 0) + 1; });
         const sorted = contestants.map(c => ({ ...c, count: counts[c.id] || 0 }))
@@ -168,10 +148,10 @@
         const list = document.getElementById('recent-list');
         list.innerHTML = recent.length ? recent.map(v => `
           <div class="feed-item">
-            <span><strong>${v.studentId || v.voterName || 'VIP'}</strong> <span style="font-size:0.7em; opacity:0.6; margin-left:5px;">${v.method || 'WEB'}</span> → ${v.performerName}</span>
+            <span><strong>${v.studentId || v.voterName || 'VIP'}</strong> <span style="opacity:0.6; font-size:0.7em;">${v.method || 'WEB'}</span> → ${v.performerName}</span>
             <span class="timestamp">${new Date(v.timestamp.seconds * 1000).toLocaleTimeString()}</span>
           </div>
-        `).join('') : '<div style="color:#444; padding:20px; text-align:center;">Awaiting Activity...</div>';
+        `).join('') : '<div style="padding:20px; text-align:center; opacity:0.5;">Awaiting Activity...</div>';
       }
 
       window.toggleVoting = async function() {
@@ -184,21 +164,25 @@
       };
 
       window.resetVotes = async function() {
-        if (!confirm("⚠️ This will wipe ALL Arena, Online, AND SMS votes. Continue?")) return;
+        if (!confirm("⚠️ DANGER: This wipes ALL data. Are you sure?")) return;
         const btn = document.getElementById('reset-btn');
         btn.disabled = true;
-        btn.innerText = "CLEARING...";
+        btn.innerText = "WIPING...";
+        
         try {
           const arenaSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'votes'));
           const onlineSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'online_votes'));
           
+          let batch = writeBatch(db);
+          let count = 0;
           const allDocs = [...arenaSnap.docs, ...onlineSnap.docs];
-          while (allDocs.length) {
-            const batch = writeBatch(db);
-            const chunk = allDocs.splice(0, 400);
-            chunk.forEach(d => batch.delete(d.ref));
-            await batch.commit();
+
+          for(const d of allDocs) {
+              batch.delete(d.ref);
+              count++;
+              if(count >= 400) { await batch.commit(); batch = writeBatch(db); count = 0; }
           }
+          if(count > 0) await batch.commit();
           alert("Reset Complete.");
         } finally { 
           btn.disabled = false; 
@@ -206,60 +190,87 @@
         }
       };
 
-      // --- SMS IMPORTER FUNCTIONALITY ---
+      // --- TURBO SMS IMPORT (Parallel Processing) ---
       window.runSMSImport = function() {
         const file = document.getElementById('sms-csv').files[0];
-        if(!file) return alert("Please upload a CSV file first.");
-        
+        if(!file) return alert("Select CSV!");
+
         const btn = document.getElementById('import-btn');
         const status = document.getElementById('import-status');
+        
         btn.disabled = true;
-        status.innerText = "PARSING & BATCHING...";
-        status.style.color = "#FF9F0A";
+        status.innerText = "🚀 STARTING TURBO SYNC...";
+        status.style.color = "#FF9F0A"; // Orange
 
         Papa.parse(file, {
             header: false,
             skipEmptyLines: true,
             complete: async (results) => {
-                const rows = results.data;
-                let batch = writeBatch(db);
-                let count = 0;
-                let added = 0;
-
-                for (let i = 1; i < rows.length; i++) {
-                    // MAPPING: Column D (Index 3) = ID, Column G (Index 6) = Vote
-                    const studentId = rows[i][3]?.toString().trim();
-                    const voteStr = rows[i][6]?.toString().trim();
-                    
-                    if(!studentId || !voteStr) continue;
-
-                    const performer = contestants.find(c => voteStr.toLowerCase().includes(c.name.toLowerCase()));
-                    
-                    if(performer) {
-                        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'votes', studentId);
-                        batch.set(ref, {
-                            studentId,
-                            performerId: performer.id,
-                            performerName: performer.name,
-                            method: 'SMS', // TAGGED AS SMS FOR SPLIT COUNT
-                            timestamp: serverTimestamp()
-                        }, { merge: true }); // Merge ensures we don't break existing data if any
-                        
-                        count++;
-                        added++;
-                        if(count === 500) { 
-                            await batch.commit(); 
-                            batch = writeBatch(db); 
-                            count = 0; 
-                        }
-                    }
-                }
-                if(count > 0) await batch.commit();
+                const rows = results.data.slice(1); // Skip header row
+                const total = rows.length;
                 
-                status.innerText = `SUCCESS: ${added} VOTES SYNCED`;
-                status.style.color = "#30D158";
+                // Process in chunks of 100
+                const CHUNK_SIZE = 100;
+                let processed = 0;
+                let validAdded = 0;
+                let fakeBlocked = 0;
+
+                for (let i = 0; i < total; i += CHUNK_SIZE) {
+                    const chunk = rows.slice(i, i + CHUNK_SIZE);
+                    const batch = writeBatch(db);
+                    let batchHasUpdates = false;
+
+                    // 1. Create array of check promises (Parallel)
+                    const promises = chunk.map(async (row) => {
+                        const id = row[3]?.toString().trim(); // Col D
+                        const vote = row[6]?.toString().trim(); // Col G
+                        
+                        if (!id || !vote) return null;
+
+                        // Check ID validity against database
+                        const validRef = doc(db, 'artifacts', appId, 'public', 'data', 'valid_ids', id);
+                        
+                        try {
+                            const snap = await getDoc(validRef);
+                            if (snap.exists()) {
+                                const performer = contestants.find(c => vote.toLowerCase().includes(c.name.toLowerCase()));
+                                if (performer) {
+                                    // Queue valid vote
+                                    const voteRef = doc(db, 'artifacts', appId, 'public', 'data', 'votes', id);
+                                    batch.set(voteRef, {
+                                        studentId: id,
+                                        performerId: performer.id,
+                                        performerName: performer.name,
+                                        method: 'SMS',
+                                        timestamp: serverTimestamp()
+                                    }, { merge: true });
+                                    return true; // Valid
+                                }
+                            }
+                        } catch(e) { console.error(e); }
+                        return false; // Invalid/Fake
+                    });
+
+                    // 2. Wait for chunk to finish
+                    const results = await Promise.all(promises);
+                    
+                    results.forEach(r => {
+                        if (r === true) { validAdded++; batchHasUpdates = true; }
+                        else if (r === false) { fakeBlocked++; }
+                    });
+
+                    // 3. Commit valid votes
+                    if (batchHasUpdates) await batch.commit();
+
+                    processed += chunk.length;
+                    const pct = Math.round((processed / total) * 100);
+                    status.innerText = `⚡ SPEED SYNC: ${pct}% COMPLETED...`;
+                }
+
+                status.innerText = `✅ DONE: ${validAdded} ADDED | ${fakeBlocked} FAKES BLOCKED`;
+                status.style.color = "#30D158"; // Green
                 btn.disabled = false;
-                file.value = ""; // Reset file input
+                file.value = "";
             }
         });
       };
@@ -307,7 +318,7 @@
         #db-status { font-size: 0.65rem; font-weight: 900; color: var(--accent); margin-top: 8px; }
         .sub-stat { font-size: 1.5rem; font-weight: 900; color: #fff; }
         
-        /* New Styles for Importer Input */
+        /* Importer UI */
         .importer-container { margin-top: 50px; background: var(--glass); border: 1px solid var(--border); border-radius: 32px; padding: 30px; }
         .file-input { background: rgba(255,255,255,0.05); border: 1px dashed var(--border); padding: 20px; border-radius: 16px; width: 100%; color: #fff; margin-bottom: 15px; }
     </style>
@@ -321,7 +332,6 @@
         <h1 style="margin: 10px 0 24px 0; font-size: 2rem; font-weight: 900; letter-spacing: -0.04em; text-transform: uppercase;">GGT VOTING ADMIN</h1>
         <input type="password" id="admin-pass" class="login-input" placeholder="ACCESS PASSWORD" onkeypress="handlePassKey(event)">
         <button class="login-btn" onclick="attemptLogin()">Log In</button>
-        <div id="login-error" style="color:#ff453a; font-size:0.75rem; margin-top:20px; font-weight:900;"></div>
     </div>
 </div>
 
@@ -388,16 +398,16 @@
 
     <div class="importer-container">
         <div class="section-header" style="margin-top:0;">
-            <div class="label">SMS Data Management</div>
+            <div class="label">SMS Data Management (Turbo Mode)</div>
             <div class="line"></div>
         </div>
         <p class="label" style="text-transform:none; letter-spacing:0; font-size:0.8rem; margin-bottom:20px;">
-            Upload CSV file to sync text message votes. This will perform a high-speed batch import.
+            Parallel Check Enabled: Upload CSV. System will verify 100 IDs at a time against "valid_ids".
             <br><span style="opacity:0.6;">Mapping: Column D = Student ID, Column G = Vote Choice.</span>
         </p>
         
         <input type="file" id="sms-csv" class="file-input" accept=".csv">
-        <button id="import-btn" class="login-btn" onclick="runSMSImport()" style="width:auto; padding: 15px 40px;">Run Batch Import</button>
+        <button id="import-btn" class="login-btn" onclick="runSMSImport()" style="width:auto; padding: 15px 40px;">Run Turbo Import</button>
         <div id="import-status" class="label" style="margin-top:15px; font-size:0.8rem;">READY</div>
     </div>
 
