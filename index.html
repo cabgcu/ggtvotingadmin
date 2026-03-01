@@ -33,16 +33,23 @@
       const auth = getAuth(app);
 
       const contestants = [
-          { id: 1, name: "Canyon Avenue" }, { id: 2, name: "Emma Cowden" },
-          { id: 3, name: "Mallary Bauman" }, { id: 4, name: "Shae Dale" },
-          { id: 5, name: "SP31" }, { id: 6, name: "Suntwist" },
-          { id: 7, name: "Sydney Miller" }, { id: 8, name: "Tim Mullins" }
+          { id: 1, name: "Suntwist", aliases: ["suntwist"] },
+          { id: 2, name: "Mallary Bauman", aliases: ["mallary", "bauman", "mallory"] },
+          { id: 3, name: "Shae Dale", aliases: ["shae", "dale"] },
+          { id: 4, name: "Canyon Avenue", aliases: ["canyon", "avenue"] },
+          { id: 5, name: "The GCU Magician", aliases: ["magician", "the gcu magician", "gcu magician"] },
+          { id: 6, name: "Cowden", aliases: ["cowden", "emma"] },
+          { id: 7, name: "SP31", aliases: ["sp31", "sp 31", "sp-31"] },
+          { id: 8, name: "Sydney Miller", aliases: ["sydney", "miller"] }
       ];
 
       let isVotingOpen = true;
       let syncStarted = false;
       let allArenaVotes = [];
       let onlineVotes = [];
+      
+      // Global variable to hold the downloaded Student IDs in memory
+      let globalPhoneTokenMap = null; 
 
       // --- LOGIN LOGIC ---
       window.attemptLogin = async function() {
@@ -187,41 +194,61 @@
         }
       };
 
-      // --- THE FINAL TURBO SMS IMPORT ---
-      window.runSMSImport = async function() {
-        const file = document.getElementById('sms-csv').files[0];
-        if(!file) return alert("Select CSV!");
-
-        const btn = document.getElementById('import-btn');
+      // --- STEP 1: PRELOAD IDS INTO BROWSER MEMORY ---
+      window.preloadStudentIDs = async function() {
+        const btn = document.getElementById('preload-btn');
         const status = document.getElementById('import-status');
         
         btn.disabled = true;
-        status.innerText = "🚀 DOWNLOADING MASTER ID CACHE...";
+        status.innerText = "🚀 DOWNLOADING MASTER ID CACHE TO BROWSER...";
         status.style.color = "#FF9F0A"; 
 
         try {
-            // 1. Fetch Master List once for speed
             const validSnapshot = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'valid_ids'));
-            const phoneTokenMap = new Map();
+            globalPhoneTokenMap = new Map();
+            let count = 0;
             
             validSnapshot.forEach(doc => {
                 const data = doc.data();
                 const last4 = data.phoneLast4 || (data.phone ? data.phone.replace(/\D/g, "").slice(-4) : null);
                 if (last4) {
-                    if (!phoneTokenMap.has(last4)) phoneTokenMap.set(last4, []);
-                    phoneTokenMap.get(last4).push(doc.id);
+                    if (!globalPhoneTokenMap.has(last4)) globalPhoneTokenMap.set(last4, []);
+                    globalPhoneTokenMap.get(last4).push(doc.id);
+                    count++;
                 }
             });
 
-            // 2. Fetch all current votes once for Hard-Lock Check
-            const currentVotesSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'votes'));
-            const votedSet = new Set();
-            currentVotesSnap.forEach(vDoc => {
-                const sId = vDoc.data().studentId;
-                if(sId) votedSet.add(sId);
-            });
+            status.innerText = `✅ CACHE LOADED: ${count} Phone/ID pairs stored in local memory. Fast import is ready.`;
+            status.style.color = "#30D158";
+            btn.style.opacity = "0.5";
+            btn.innerText = "IDs Pre-loaded";
+        } catch (e) {
+            console.error(e);
+            status.innerText = "❌ ERROR: " + e.message;
+            status.style.color = "red";
+            btn.disabled = false;
+        }
+      };
 
-            status.innerText = "⚡ PROCESSING SMS SHEET...";
+      // --- STEP 2: THE FINAL TURBO SMS IMPORT ---
+      window.runSMSImport = async function() {
+        const file = document.getElementById('sms-csv').files[0];
+        if(!file) return alert("Select CSV!");
+        if(!globalPhoneTokenMap) return alert("Please click '1. Pre-load IDs' before running the import!");
+
+        const btn = document.getElementById('import-btn');
+        const status = document.getElementById('import-status');
+        
+        btn.disabled = true;
+        status.innerText = "⚡ PROCESSING SMS SHEET IN MEMORY...";
+        status.style.color = "#FF9F0A"; 
+
+        try {
+            // Build the Voted Set instantly from the live local data array (ZERO database reads!)
+            const votedSet = new Set();
+            allArenaVotes.forEach(v => {
+                if(v.studentId) votedSet.add(v.studentId);
+            });
 
             Papa.parse(file, {
                 header: false,
@@ -239,7 +266,7 @@
                         const rawPhone = row[4]?.toString().trim();   // Col E
                         const last4 = rawPhone?.replace(/\D/g, "").slice(-4);
                         
-                        const availableIDs = phoneTokenMap.get(last4);
+                        const availableIDs = globalPhoneTokenMap.get(last4);
 
                         if (availableIDs) {
                             if (typeof phoneUsageIndex[last4] === 'undefined') phoneUsageIndex[last4] = 0;
@@ -252,11 +279,13 @@
                                     foundUnvotedId = candidateId;
                                     break;
                                 }
-                                phoneUsageIndex[last4]++; // Skip IDs that already have a vote in DB
+                                phoneUsageIndex[last4]++; // Skip IDs that already have a vote
                             }
 
                             if (foundUnvotedId) {
-                                const performer = contestants.find(c => voteChoice.toLowerCase().includes(c.name.toLowerCase()));
+                                const performer = contestants.find(c => 
+                                    c.aliases.some(alias => voteChoice.toLowerCase().includes(alias))
+                                );
                                 if (performer) {
                                     const voteId = `${foundUnvotedId}_${performer.id}`;
                                     batch.set(doc(db, 'artifacts', appId, 'public', 'data', 'votes', voteId), {
@@ -267,7 +296,7 @@
                                         timestamp: serverTimestamp()
                                     });
 
-                                    votedSet.add(foundUnvotedId); // Mark as voted for this batch
+                                    votedSet.add(foundUnvotedId); // Mark as voted for this batch run
                                     phoneUsageIndex[last4]++; // Move to next ID for next time
                                     added++;
                                     count++;
@@ -318,7 +347,8 @@
         #view-login { height: 80vh; display: flex; align-items: center; justify-content: center; }
         .login-card { background: var(--glass); backdrop-filter: blur(30px); padding: 40px 32px; border-radius: 32px; border: 1px solid var(--border); width: 380px; text-align: center; }
         .login-input { width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--border); padding: 18px; border-radius: 16px; color: #fff; text-align: center; margin: 20px 0; outline: none; font-weight: 800; font-size: 1rem; }
-        .login-btn { width: 100%; background: var(--accent); color: #fff; border: none; padding: 18px; border-radius: 100px; font-weight: 900; cursor: pointer; text-transform: uppercase; }
+        .login-btn { width: 100%; background: var(--accent); color: #fff; border: none; padding: 18px; border-radius: 100px; font-weight: 900; cursor: pointer; text-transform: uppercase; transition: opacity 0.2s; }
+        .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         #view-admin { display: none; width: 100%; }
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
         .main-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-bottom: 40px; }
@@ -344,6 +374,7 @@
         
         .importer-container { margin-top: 50px; background: var(--glass); border: 1px solid var(--border); border-radius: 32px; padding: 30px; }
         .file-input { background: rgba(255,255,255,0.05); border: 1px dashed var(--border); padding: 20px; border-radius: 16px; width: 100%; color: #fff; margin-bottom: 15px; }
+        .action-row { display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -425,13 +456,18 @@
             <div class="line"></div>
         </div>
         <p class="label" style="text-transform:none; letter-spacing:0; font-size:0.8rem; margin-bottom:20px;">
-            Parallel Check Enabled: Upload CSV. System will verify phone numbers against linked Student IDs.
+            Parallel Check Enabled. Upload CSV, verify IDs, and import votes.
             <br><span style="opacity:0.6;">Mapping: Column A = Vote, Column E = Phone Number.</span>
         </p>
         
         <input type="file" id="sms-csv" class="file-input" accept=".csv">
-        <button id="import-btn" class="login-btn" onclick="runSMSImport()" style="width:auto; padding: 15px 40px;">Run Turbo Import</button>
-        <div id="import-status" class="label" style="margin-top:15px; font-size:0.8rem;">READY</div>
+        
+        <div class="action-row">
+            <button id="preload-btn" class="login-btn" onclick="preloadStudentIDs()" style="width:auto; padding: 15px 30px; background: #FF9F0A;">1. Pre-load IDs</button>
+            <button id="import-btn" class="login-btn" onclick="runSMSImport()" style="width:auto; padding: 15px 30px; background: #30D158;">2. Run Import</button>
+        </div>
+        
+        <div id="import-status" class="label" style="margin-top:15px; font-size:0.8rem;">READY - Awaiting ID Pre-load</div>
     </div>
 
     <div class="recent-feed" style="margin-top: 40px;">
